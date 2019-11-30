@@ -18,7 +18,8 @@ class Model:
 
         self.batch_size = params.batch_size
         self.total_epochs = params.n_epoch
-        self.ratio = params.se_ratio
+        self.ratio = params.ratio
+        self.mode = params.mode
         self.training = True
         self.weight_decay = 0.0005
         
@@ -86,7 +87,7 @@ class Model:
 
             return x
 
-    def squeeze_excitation_layer(self, x, out_dim, scope):
+    def se_block(self, x, out_dim, scope):
         with tf.name_scope(scope) :
             squeeze = self.Global_Average_Pooling(x)
 
@@ -99,6 +100,77 @@ class Model:
             scale = x * excitation
 
             return scale
+
+    def nl_block(self, x, out_dim, scope):
+        with tf.name_scope(scope) :
+            n, h, w, c = x.get_shape().as_list()
+
+            wv = self.conv_layer(x, filters=out_dim, kernel=1, stride=1, layer_name=scope+'_conv1')
+            wk = self.conv_layer(x, filters=out_dim, kernel=1, stride=1, layer_name=scope+'_conv2')
+            wq = self.conv_layer(x, filters=out_dim, kernel=1, stride=1, layer_name=scope+'_conv3')
+
+            wv = tf.transpose(wv, [0,3,1,2])
+            wk = tf.transpose(wk, [0,3,1,2])
+            wq = tf.transpose(wq, [0,3,1,2])
+
+            wv = tf.reshape(wv, [n, out_dim, -1])
+            wq = tf.reshape(wq, [n, out_dim, -1])
+            wk = tf.reshape(wk, [n, out_dim, -1])
+            wk = tf.transpose(wk, [0,2,1])
+
+            f = tf.matmul(wk, wq)
+            f_softmax = tf.nn.softmax(f, 1)
+
+            y = tf.matmul(wv, f_softmax)
+            y = tf.reshape(y, [n, out_dim, h, w])
+            y = tf.transpose(y, [0,2,3,1])
+
+            wz = self.conv_layer(y, filters=out_dim, kernel=1, stride=1, layer_name=scope+'_conv4')
+            z = x + wz
+
+            return z
+
+    def snl_block(self, x, out_dim, scope):
+        with tf.name_scope(scope) :
+            n, h, w, c = x.get_shape().as_list()
+
+            wk = self.conv_layer(x, filters=1, kernel=1, stride=1, layer_name=scope+'_conv1')
+            wk = tf.reshape(wk, [n, h*w, 1])
+
+            wk_softmax = tf.nn.softmax(wk, 1)
+
+            x_reshape = tf.transpose(x, [0,3,1,2])
+            x_reshape = tf.reshape(x_reshape, [n, c, -1])
+            f = tf.matmul(x_reshape, wk)
+            y = tf.reshape(f, [n, 1, 1, out_dim])
+
+            wz = self.conv_layer(y, filters=out_dim, kernel=1, stride=1, layer_name=scope+'_conv2')
+            z = x + wz
+
+            return z
+
+    def gc_block(self, x, out_dim, scope):
+        with tf.name_scope(scope) :
+            n, h, w, c = x.get_shape().as_list()
+
+            wk = self.conv_layer(x, filters=1, kernel=1, stride=1, layer_name=scope+'_conv1')
+            wk = tf.reshape(wk, [n, h*w, 1])
+
+            wk_softmax = tf.nn.softmax(wk, 1)
+
+            x_reshape = tf.transpose(x, [0,3,1,2])
+            x_reshape = tf.reshape(x_reshape, [n, c, -1])
+            f = tf.matmul(x_reshape, wk)
+            y = tf.reshape(f, [n, 1, 1, out_dim])
+
+            wv_1 = self.conv_layer(y, filters=out_dim/self.ratio, kernel=1, stride=1, layer_name=scope+'_conv2')
+            wv_1 = self.Batch_Normalization(wv_1, training=self.training, scope=scope+'_batch1')
+            wv_1 = self.Relu(wv_1)
+            wv_2 = self.conv_layer(wv_1, filters=out_dim, kernel=1, stride=1, layer_name=scope+'_conv3')
+
+            z = x + wv_2
+
+            return z
 
     def Residual_block(self, x, out_dim, block_name, n_block):
         for i in range(n_block):
@@ -116,7 +188,14 @@ class Model:
                 stride = 1                
 
             x = self.transform_layer(input_x, stride=stride, out_dim=out_dim, scope='transform_layer_'+block_name+'_'+str(i))
-            x = self.squeeze_excitation_layer(x, out_dim=out_dim, scope='squeeze_layer_'+block_name+'_'+str(i))
+            if self.mode == 'SENet':
+                x = self.se_block(x, out_dim=out_dim, scope='se_block_'+block_name+'_'+str(i))
+            if self.mode == 'NLNet':
+                x = self.nl_block(x, out_dim=out_dim, scope='nl_block_'+block_name+'_'+str(i))
+            if self.mode == 'SNLNet':
+            x = self.snl_block(x, out_dim=out_dim, scope='snl_block_'+block_name+'_'+str(i))            
+            if self.mode == 'GCNet':
+            x = self.gc_block(x, out_dim=out_dim, scope='gc_block_'+block_name+'_'+str(i))
 
             if flag is True :
                 branch_x = self.transistion_layer(input_x, stride=stride, out_dim=out_dim, scope='transistion_layer_'+block_name+'_'+str(i))
@@ -172,8 +251,8 @@ class Model:
         return test_acc, test_loss
 
     def train(self):
-        x = tf.placeholder(tf.float32, shape=[None, 32, 32, 3])
-        label = tf.placeholder(tf.float32, shape=[None, 10])
+        x = tf.placeholder(tf.float32, shape=[self.batch_size, 32, 32, 3])
+        label = tf.placeholder(tf.float32, shape=[self.batch_size, 10])
         training_flag = tf.placeholder(tf.bool)
         learning_rate = tf.placeholder(tf.float32, name='learning_rate')
 

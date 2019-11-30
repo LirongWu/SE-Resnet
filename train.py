@@ -13,7 +13,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--n_epoch', type=int, default=100, help='Number of training epoch')
     parser.add_argument('--n_gpu', type=str, default='3,4', help='Number of GPUs')
-    parser.add_argument('--se_ratio', type=int, default=4, help='Ratio for SENet')
+    parser.add_argument('--ratio', type=int, default=4, help='Ratio for SENet/GCNet')
+    parser.add_argument('--mode', type=str, default='SENet', help='Mode: SENet, NLNet, SNLNet and GCNet')
 
     params = parser.parse_args()
 
