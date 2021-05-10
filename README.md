@@ -1,2 +1,2 @@
 # SE-Resnet
- A tensorflow implementation of SE-Resnet50
+ A simple tensorflow implementation of SE-Resnet50.
